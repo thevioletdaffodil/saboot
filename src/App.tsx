@@ -3,6 +3,7 @@ import {
   ContractRecord,
   ContractStatus,
   ContractTerms,
+  DayEntryStatus,
   EscrowDayEntry,
   LanguageCode,
   LenderShareRecord,
@@ -72,7 +73,14 @@ export default function App() {
   const recordTx = useCallback(
     (actor: Role, kind: WalletTransaction['kind'], amount: number, note: string, tsIso: string) => {
       setTransactions((prev) => [
-        { id: `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, actor, kind, amount, note, timestamp: tsIso },
+        {
+          id: `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          actor,
+          kind,
+          amount,
+          note,
+          timestamp: tsIso,
+        },
         ...prev,
       ]);
     },
@@ -184,9 +192,30 @@ export default function App() {
       if (active) {
         setContracts([c1Base, c2]);
         setTransactions([
-          { id: 'tx_1', actor: 'worker', kind: 'payout', amount: 550, note: 'SB4829A · Approved', timestamp: ev2.timestamp },
-          { id: 'tx_2', actor: 'employer', kind: 'fund', amount: 3300, note: 'SB4829A · 6 days escrow', timestamp: t1.createdAt },
-          { id: 'tx_3', actor: 'employer', kind: 'topup', amount: 11800, note: 'UPI Deposit', timestamp: new Date(base - TWENTY_FOUR_HOURS_MS * 5).toISOString() },
+          {
+            id: 'tx_1',
+            actor: 'worker',
+            kind: 'payout',
+            amount: 550,
+            note: 'SB4829A · Approved',
+            timestamp: ev2.timestamp,
+          },
+          {
+            id: 'tx_2',
+            actor: 'employer',
+            kind: 'fund',
+            amount: 3300,
+            note: 'SB4829A · 6 days escrow',
+            timestamp: t1.createdAt,
+          },
+          {
+            id: 'tx_3',
+            actor: 'employer',
+            kind: 'topup',
+            amount: 11800,
+            note: 'UPI Deposit',
+            timestamp: new Date(base - TWENTY_FOUR_HOURS_MS * 5).toISOString(),
+          },
         ]);
       }
     })();
@@ -272,7 +301,11 @@ export default function App() {
     };
 
     const hash = await CanonicalCryptoEngine.hashTerms(newTerms);
-    const sig = await CanonicalCryptoEngine.signHash(newTerms.employerId, employerKeysRef.current, hash);
+    const sig = await CanonicalCryptoEngine.signHash(
+      newTerms.employerId,
+      employerKeysRef.current,
+      hash
+    );
 
     const created: ContractRecord = {
       terms: newTerms,
@@ -335,7 +368,13 @@ export default function App() {
           return c;
         }
         setEmployerWallet((w) => w - amount);
-        recordTx('employer', 'fund', amount, `${c.terms.id} · ${daysToLock}d escrow`, new Date(currentTimeMs).toISOString());
+        recordTx(
+          'employer',
+          'fund',
+          amount,
+          `${c.terms.id} · ${daysToLock}d escrow`,
+          new Date(currentTimeMs).toISOString()
+        );
         notify(`Locked ${formatINR(amount)} into escrow.`);
         return { ...c, escrow: { ...c.escrow, lockedAmount: c.escrow.lockedAmount + amount } };
       })
@@ -352,7 +391,13 @@ export default function App() {
           return c;
         }
         setEmployerWallet((w) => w + spare);
-        recordTx('employer', 'refund', spare, `${c.terms.id} · Reclaimed spare`, new Date(currentTimeMs).toISOString());
+        recordTx(
+          'employer',
+          'refund',
+          spare,
+          `${c.terms.id} · Reclaimed spare`,
+          new Date(currentTimeMs).toISOString()
+        );
         notify(`Reclaimed ${formatINR(spare)} back to Employer wallet.`);
         return { ...c, escrow: { ...c.escrow, lockedAmount: c.escrow.lockedAmount - spare } };
       })
@@ -365,8 +410,13 @@ export default function App() {
         if (c.terms.id !== contractId) return c;
         const qty = Math.max(1, pieceCounts[contractId] || 10);
         const amount =
-          c.terms.per === 'piece' ? qty * c.terms.wage : EscrowDomainEngine.calculateDailyWage(c.terms);
-        const note = c.terms.per === 'piece' ? `${qty} pcs × ${formatINR(c.terms.wage)}` : 'Daily shift check-in';
+          c.terms.per === 'piece'
+            ? qty * c.terms.wage
+            : EscrowDomainEngine.calculateDailyWage(c.terms);
+        const note =
+          c.terms.per === 'piece'
+            ? `${qty} pcs × ${formatINR(c.terms.wage)}`
+            : 'Daily shift check-in';
         const ts = new Date(currentTimeMs).toISOString();
         const ev = await CanonicalCryptoEngine.appendChainEvent(c, 'CHECKIN', true, amount, ts);
         const entry: EscrowDayEntry = {
@@ -399,7 +449,13 @@ export default function App() {
           return c;
         }
         const ts = new Date(currentTimeMs).toISOString();
-        const ev = await CanonicalCryptoEngine.appendChainEvent(c, 'PAYOUT_APPROVED', true, target.amount, ts);
+        const ev = await CanonicalCryptoEngine.appendChainEvent(
+          c,
+          'PAYOUT_APPROVED',
+          true,
+          target.amount,
+          ts
+        );
         setWorkerWallet((w) => w + target.amount);
         recordTx('worker', 'payout', target.amount, `${c.terms.id} · Approved`, ts);
         notify(`Approved & paid ${formatINR(target.amount)}.`);
@@ -408,7 +464,9 @@ export default function App() {
           events: [...c.events, ev],
           escrow: {
             lockedAmount: c.escrow.lockedAmount - target.amount,
-            days: c.escrow.days.map((d) => (d.id === dayId ? { ...d, status: 'paid' } : d)),
+            days: c.escrow.days.map((d) =>
+              d.id === dayId ? { ...d, status: 'paid' as DayEntryStatus } : d
+            ),
           },
         };
       })
@@ -423,13 +481,21 @@ export default function App() {
         const target = c.escrow.days.find((d) => d.id === dayId);
         if (!target) return c;
         const ts = new Date(currentTimeMs).toISOString();
-        const ev = await CanonicalCryptoEngine.appendChainEvent(c, 'DISPUTED', false, target.amount, ts);
+        const ev = await CanonicalCryptoEngine.appendChainEvent(
+          c,
+          'DISPUTED',
+          false,
+          target.amount,
+          ts
+        );
         return {
           ...c,
           events: [...c.events, ev],
           escrow: {
             ...c.escrow,
-            days: c.escrow.days.map((d) => (d.id === dayId ? { ...d, status: 'disputed' } : d)),
+            days: c.escrow.days.map((d) =>
+              d.id === dayId ? { ...d, status: 'disputed' as DayEntryStatus } : d
+            ),
           },
         };
       })
@@ -465,7 +531,9 @@ export default function App() {
           escrow: {
             lockedAmount: c.escrow.lockedAmount - target.amount,
             days: c.escrow.days.map((d) =>
-              d.id === dayId ? { ...d, status: payWorker ? 'paid' : 'refunded' } : d
+              d.id === dayId
+                ? { ...d, status: (payWorker ? 'paid' : 'refunded') as DayEntryStatus }
+                : d
             ),
           },
         };
@@ -514,7 +582,8 @@ export default function App() {
 
   const pendingOffersCount = contracts.filter((c) => c.status === 'offer').length;
   const pendingApprovalsCount = contracts.reduce(
-    (sum, c) => sum + c.escrow.days.filter((d) => d.status === 'pending' || d.status === 'disputed').length,
+    (sum, c) =>
+      sum + c.escrow.days.filter((d) => d.status === 'pending' || d.status === 'disputed').length,
     0
   );
 
@@ -591,7 +660,8 @@ export default function App() {
                 Choose your workspace
               </h1>
               <p className="text-slate-600 dark:text-slate-300 mt-1 text-sm sm:text-base">
-                Saboot separates Employer and Employee interfaces so each side gets tools built for their exact needs.
+                Saboot separates Employer and Employee interfaces so each side gets tools built for
+                their exact needs.
               </p>
             </div>
 
@@ -611,16 +681,20 @@ export default function App() {
                 </div>
                 <ul className="text-sm text-slate-600 dark:text-slate-300 space-y-2 list-disc pl-5">
                   <li>
-                    <strong>Listen before signing:</strong> Mandatory spoken terms in all 23 Indian languages.
+                    <strong>Listen before signing:</strong> Mandatory spoken terms in all 23 Indian
+                    languages.
                   </li>
                   <li>
-                    <strong>One-tap daily proof:</strong> Auto-pays in 24h if an employer delays approval.
+                    <strong>One-tap daily proof:</strong> Auto-pays in 24h if an employer delays
+                    approval.
                   </li>
                   <li>
-                    <strong>24h private cancel:</strong> Walk away safely within 24 hours of signing.
+                    <strong>24h private cancel:</strong> Walk away safely within 24 hours of
+                    signing.
                   </li>
                   <li>
-                    <strong>Portable trust score:</strong> Share tier-only proof with microfinance lenders.
+                    <strong>Portable trust score:</strong> Share tier-only proof with microfinance
+                    lenders.
                   </li>
                 </ul>
                 <span className="mt-auto inline-flex justify-center items-center bg-[#f4a300] text-[#17153b] border-2 border-[#17153b] rounded-xl py-2.5 font-bold text-sm shadow-[3px_3px_0_#17153b]">
@@ -643,16 +717,20 @@ export default function App() {
                 </div>
                 <ul className="text-sm text-slate-600 dark:text-slate-300 space-y-2 list-disc pl-5">
                   <li>
-                    <strong>Offer Builder:</strong> Standardized micro-contracts with instant voice preview.
+                    <strong>Offer Builder:</strong> Standardized micro-contracts with instant voice
+                    preview.
                   </li>
                   <li>
-                    <strong>Escrow &amp; Piece-Rate Control:</strong> Lock wages upfront and approve shifts.
+                    <strong>Escrow &amp; Piece-Rate Control:</strong> Lock wages upfront and
+                    approve shifts.
                   </li>
                   <li>
-                    <strong>Tamper-Proof Audit Packs:</strong> Dual ECDSA P-256 signatures &amp; SHA-256 chains.
+                    <strong>Tamper-Proof Audit Packs:</strong> Dual ECDSA P-256 signatures &amp;
+                    SHA-256 chains.
                   </li>
                   <li>
-                    <strong>Business Wallet:</strong> Fund escrow reserves and reclaim excess funds safely.
+                    <strong>Business Wallet:</strong> Fund escrow reserves and reclaim excess funds
+                    safely.
                   </li>
                 </ul>
                 <span className="mt-auto inline-flex justify-center items-center bg-teal-400 text-[#052e2b] border-2 border-[#17153b] rounded-xl py-2.5 font-bold text-sm shadow-[3px_3px_0_#17153b]">
@@ -818,18 +896,22 @@ export default function App() {
                   <div>
                     <label className="block text-xs font-bold mb-1.5">Work Category</label>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                      {(Object.entries(pack.workLabels) as [WorkCategory, string][]).map(([k, label]) => (
-                        <button
-                          key={k}
-                          type="button"
-                          onClick={() => setDraftWork(k)}
-                          className={`border-2 border-[#17153b] rounded-xl py-2.5 px-3 text-xs font-bold transition ${
-                            draftWork === k ? 'bg-teal-300 text-[#052e2b]' : 'bg-white text-slate-900'
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      ))}
+                      {(Object.entries(pack.workLabels) as [WorkCategory, string][]).map(
+                        ([k, label]) => (
+                          <button
+                            key={k}
+                            type="button"
+                            onClick={() => setDraftWork(k)}
+                            className={`border-2 border-[#17153b] rounded-xl py-2.5 px-3 text-xs font-bold transition ${
+                              draftWork === k
+                                ? 'bg-teal-300 text-[#052e2b]'
+                                : 'bg-white text-slate-900'
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        )
+                      )}
                     </div>
                   </div>
 
@@ -851,11 +933,13 @@ export default function App() {
                         onChange={(e) => setDraftUnit(e.target.value as WageUnit)}
                         className="w-full border-2 border-[#17153b] rounded-xl px-3 py-2 text-sm font-bold bg-white text-slate-900"
                       >
-                        {(Object.entries(pack.unitLabels) as [WageUnit, string][]).map(([k, label]) => (
-                          <option key={k} value={k}>
-                            {label}
-                          </option>
-                        ))}
+                        {(Object.entries(pack.unitLabels) as [WageUnit, string][]).map(
+                          ([k, label]) => (
+                            <option key={k} value={k}>
+                              {label}
+                            </option>
+                          )
+                        )}
                       </select>
                     </div>
                     <div>
@@ -900,7 +984,9 @@ export default function App() {
                   </div>
 
                   <div>
-                    <div className="text-xs font-bold mb-1">Live Voice Preview ({pack.nativeName})</div>
+                    <div className="text-xs font-bold mb-1">
+                      Live Voice Preview ({pack.nativeName})
+                    </div>
                     <KaraokeBox
                       text={pack.formatSummary(
                         pack.workLabels[draftWork],
@@ -968,8 +1054,8 @@ export default function App() {
                                 {c.terms.workerName} · {c.terms.id}
                               </div>
                               <div className="text-xs text-slate-500">
-                                {d.dateKey} · <strong>{formatINR(d.amount)}</strong> ({d.note}) · Escrow locked:{' '}
-                                {formatINR(c.escrow.lockedAmount)}
+                                {d.dateKey} · <strong>{formatINR(d.amount)}</strong> ({d.note}) ·
+                                Escrow locked: {formatINR(c.escrow.lockedAmount)}
                               </div>
                             </div>
                             <div className="flex gap-2">
@@ -1038,7 +1124,13 @@ export default function App() {
                             type="button"
                             onClick={() => {
                               setEmployerWallet((w) => w + amt);
-                              recordTx('employer', 'topup', amt, 'Simulated UPI Deposit', new Date(currentTimeMs).toISOString());
+                              recordTx(
+                                'employer',
+                                'topup',
+                                amt,
+                                'Simulated UPI Deposit',
+                                new Date(currentTimeMs).toISOString()
+                              );
                               notify(`+${formatINR(amt)} added to Employer wallet.`);
                             }}
                             className="border-2 border-[#17153b] bg-white text-slate-900 rounded-full px-3.5 py-1 text-xs font-bold shadow-[2px_2px_0_#17153b]"
@@ -1054,7 +1146,13 @@ export default function App() {
                         onClick={() => {
                           const payout = workerWallet;
                           setWorkerWallet(0);
-                          recordTx('worker', 'withdraw', payout, 'Instant UPI Withdrawal', new Date(currentTimeMs).toISOString());
+                          recordTx(
+                            'worker',
+                            'withdraw',
+                            payout,
+                            'Instant UPI Withdrawal',
+                            new Date(currentTimeMs).toISOString()
+                          );
                           notify(`${formatINR(payout)} withdrawn to UPI.`);
                         }}
                         className="bg-[#f4a300] disabled:opacity-40 text-[#17153b] border-2 border-[#17153b] rounded-xl px-5 py-2.5 text-sm font-bold shadow-[3px_3px_0_#17153b]"
@@ -1092,7 +1190,9 @@ export default function App() {
                   <div className="bg-[#fffdf7] dark:bg-[#18163a] border-2 border-[#17153b] rounded-2xl p-6 shadow-[4px_4px_0_#17153b] space-y-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <div className="text-xs font-bold uppercase text-slate-500">Verified Tier</div>
+                        <div className="text-xs font-bold uppercase text-slate-500">
+                          Verified Tier
+                        </div>
                         <div className="font-display font-black text-3xl">{trust.tierName}</div>
                       </div>
                       <div className="text-right text-xs">
@@ -1121,7 +1221,8 @@ export default function App() {
                     </div>
 
                     <p className="text-xs text-slate-600 dark:text-slate-300">
-                      Privacy guarantee: Microfinance lenders receive only your tier badge and on-time rate—never your employer names or exact wages.
+                      Privacy guarantee: Microfinance lenders receive only your tier badge and
+                      on-time rate—never your employer names or exact wages.
                     </p>
 
                     <button
@@ -1191,7 +1292,8 @@ export default function App() {
                       const heard = Boolean(heardOffers[terms.id]);
                       const dailyWage = EscrowDomainEngine.calculateDailyWage(terms);
                       const securedDays = EscrowDomainEngine.getProtectedDaysCount(c);
-                      const cancelOpen = c.status === 'active' && currentTimeMs < c.cancelWindowEndsAtMs;
+                      const cancelOpen =
+                        c.status === 'active' && currentTimeMs < c.cancelWindowEndsAtMs;
                       const ver = verificationStatus[terms.id];
 
                       return (
@@ -1237,7 +1339,8 @@ export default function App() {
                                   ))}
                                 </div>
                                 <div className="inline-block bg-amber-100 text-slate-900 border border-[#17153b] rounded-lg px-2.5 py-1 text-xs font-bold">
-                                  Match Symbols: {CanonicalCryptoEngine.deriveEmojiFingerprint(c.canonicalHash)}
+                                  Match Symbols:{' '}
+                                  {CanonicalCryptoEngine.deriveEmojiFingerprint(c.canonicalHash)}
                                 </div>
                                 <div className="font-mono text-[11px] text-slate-500 break-all">
                                   SHA-256 {c.canonicalHash.slice(0, 32)}…
@@ -1463,7 +1566,9 @@ export default function App() {
               className="bg-[#fffdf7] dark:bg-[#18163a] border-2 border-[#17153b] rounded-3xl p-5 max-w-2xl w-full max-h-[85vh] overflow-y-auto space-y-4"
             >
               <div className="flex items-center justify-between">
-                <h2 className="font-display font-black text-xl">All 23 Scheduled Indian Languages</h2>
+                <h2 className="font-display font-black text-xl">
+                  All 23 Scheduled Indian Languages
+                </h2>
                 <button
                   type="button"
                   onClick={() => setLangModalOpen(false)}
@@ -1489,29 +1594,29 @@ export default function App() {
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                {(Object.entries(LANGUAGES) as [LanguageCode, (typeof LANGUAGES)[LanguageCode]][]).map(
-                  ([code, item]) => (
-                    <button
-                      key={code}
-                      type="button"
-                      onClick={() => {
-                        voice.stop();
-                        setLang(code);
-                        setLangModalOpen(false);
-                      }}
-                      className={`border-2 border-[#17153b] rounded-2xl p-3 text-left transition ${
-                        lang === code
-                          ? 'bg-[#f4a300] text-[#17153b]'
-                          : 'bg-white text-slate-900 hover:bg-amber-50'
-                      }`}
-                    >
-                      <div className="font-bold text-base">{item.nativeName}</div>
-                      <div className="text-xs opacity-75">
-                        {item.englishName} ({item.code})
-                      </div>
-                    </button>
-                  )
-                )}
+                {(
+                  Object.entries(LANGUAGES) as [LanguageCode, (typeof LANGUAGES)[LanguageCode]][]
+                ).map(([code, item]) => (
+                  <button
+                    key={code}
+                    type="button"
+                    onClick={() => {
+                      voice.stop();
+                      setLang(code);
+                      setLangModalOpen(false);
+                    }}
+                    className={`border-2 border-[#17153b] rounded-2xl p-3 text-left transition ${
+                      lang === code
+                        ? 'bg-[#f4a300] text-[#17153b]'
+                        : 'bg-white text-slate-900 hover:bg-amber-50'
+                    }`}
+                  >
+                    <div className="font-bold text-base">{item.nativeName}</div>
+                    <div className="text-xs opacity-75">
+                      {item.englishName} ({item.code})
+                    </div>
+                  </button>
+                ))}
               </div>
             </div>
           </div>
